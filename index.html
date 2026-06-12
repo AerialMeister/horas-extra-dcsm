@@ -111,7 +111,6 @@ function isAdmin(){return PERFIL && (PERFIL.rol==="admin"||PERFIL.rol==="superad
 
 /* ===== AUTH ===== */
 async function init(){
-  if((location.hash||"").indexOf("type=recovery")!==-1){return;}
   const {data}=await sb.auth.getSession();
   if(data.session){await loadPerfil();route();}else renderLogin();
 }
@@ -168,7 +167,30 @@ function askComment(titulo,etiqueta){
 }
 
 /* ===== ROUTER ===== */
-function route(){if(!PERFIL)return renderLogin();isAdmin()?renderAdmin():renderUser();}
+function route(){if(!PERFIL)return renderLogin();if(PERFIL.debe_cambiar_clave)return renderCambioClave();isAdmin()?renderAdmin():renderUser();}
+function renderCambioClave(){
+  document.getElementById("app").innerHTML=
+   '<div class="login-wrap"><div class="card login-card">'+
+   '<div style="display:flex;justify-content:center;margin-bottom:6px">'+logo(54)+'</div>'+
+   '<h2 style="text-align:center">Define tu nueva contraseña</h2>'+
+   '<p class="sub" style="text-align:center">Tu administrador reseteó tu acceso. Crea una contraseña nueva para continuar.</p>'+
+   '<label>Nueva contraseña</label><input id="np1" type="password" placeholder="••••••">'+
+   '<label>Confirmar contraseña</label><input id="np2" type="password" placeholder="••••••">'+
+   '<div class="err" id="nperr"></div>'+
+   '<button class="btn-primary" style="width:100%;margin-top:12px" onclick="guardarNuevaClave()">Guardar y entrar</button>'+
+   '<div style="text-align:center;margin-top:10px"><button class="btn-link" style="background:none;color:var(--primary);padding:4px;font-size:13px" onclick="logout()">Cancelar y salir</button></div>'+
+   '</div></div>';
+}
+async function guardarNuevaClave(){
+  const p1=document.getElementById("np1").value,p2=document.getElementById("np2").value,err=document.getElementById("nperr");
+  if(p1.length<6){err.textContent="La contraseña debe tener al menos 6 caracteres.";return;}
+  if(p1!==p2){err.textContent="Las contraseñas no coinciden.";return;}
+  const {error}=await sb.auth.updateUser({password:p1});
+  if(error){err.textContent=error.message;return;}
+  await sb.rpc("marcar_clave_cambiada");
+  PERFIL.debe_cambiar_clave=false;
+  toast("Contraseña actualizada ✓");route();
+}
 
 /* ===== SOLICITANTE ===== */
 let userTab="bandeja",editing=null,_editRow=null;
@@ -364,9 +386,8 @@ function exportCSV(){
 /* ===== CUENTAS (solo super) ===== */
 async function renderCuentas(){
   const {data:us}=await sb.from("perfiles").select("*").order("rol");
-  const rows=(us||[]).map(u=>'<div class="user-row" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><span><b>'+esc(u.email)+'</b> · '+esc(u.nombre)+' <span class="muted">('+(u.rol==="superadmin"?"super":u.rol==="admin"?"supervisor":u.area)+')</span></span>'+
-   '<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-ghost btn-sm" onclick="adminEditUser(\''+u.id+'\')">✏️ Editar</button>'+
-   (u.rol==="superadmin"?'':'<button class="btn-amber btn-sm" onclick="adminResetPass(\''+esc(u.email)+'\')">🔑 Reset contraseña</button>')+'</span></div>').join("");
+  const rows=(us||[]).map(u=>'<div class="user-row"><span><b>'+esc(u.email)+'</b> · '+esc(u.nombre)+' <span class="muted">('+(u.rol==="superadmin"?"super":u.rol==="admin"?"supervisor":u.area)+')</span></span>'+
+     (u.rol!=="superadmin"?'<button class="btn-amber btn-sm" onclick="resetClave(\''+u.id+'\',\''+esc(u.email)+'\')">Resetear clave</button>':'<span class="muted" style="font-size:12px">tu cuenta</span>')+'</div>').join("");
   document.getElementById("abody").innerHTML=
    '<div class="card" style="max-width:640px;margin-bottom:18px"><p class="section-title">Crear cuenta</p>'+
    '<p class="muted" style="margin-top:-8px">Solo tú (super usuario) puedes crear cuentas. Crea solicitantes o supervisores.</p>'+
@@ -392,86 +413,24 @@ async function adminCreateUser(){
   if(error){err.textContent=error.message;return;}
   toast("Cuenta '"+email+"' creada ✓");renderCuentas();
 }
-
-/* ===== EDITAR CUENTA (solo super) ===== */
-async function adminEditUser(id){
-  const {data:u,error}=await sb.from("perfiles").select("*").eq("id",id).single();
-  if(error||!u){toast("No se pudo cargar la cuenta","#dc2626");return;}
-  const isSuperRow=u.rol==="superadmin";
+function infoModal(titulo,html){
   const host=document.getElementById("modal-host");
   host.innerHTML='<div class="modal-bg"><div class="modal">'+
-    '<p class="section-title">Editar cuenta</p>'+
-    '<p class="muted" style="margin-top:-8px">'+esc(u.email)+'</p>'+
-    '<label>Nombre completo</label><input id="eu_name" value="'+esc(u.nombre||"")+'">'+
-    '<div class="row2"><div><label>Tipo de cuenta</label><select id="eu_rol" '+(isSuperRow?'disabled':'')+' onchange="document.getElementById(\'eu_area_wrap\').style.display=this.value===\'admin\'?\'none\':\'block\'">'+
-      '<option value="solicitante" '+(u.rol==="solicitante"?'selected':'')+'>Solicitante</option>'+
-      '<option value="admin" '+(u.rol==="admin"?'selected':'')+'>Supervisor</option>'+
-      (isSuperRow?'<option value="superadmin" selected>Super usuario</option>':'')+
-    '</select></div>'+
-    '<div id="eu_area_wrap" style="display:'+((u.rol==="admin"||isSuperRow)?'none':'block')+'"><label>Área</label><select id="eu_area">'+AREAS.map(a=>'<option '+(a===u.area?'selected':'')+'>'+a+'</option>').join("")+'</select></div></div>'+
-    (isSuperRow?'<p class="muted" style="font-size:12px">El rol de super usuario no se puede cambiar desde aquí.</p>':"")+
-    '<div class="err" id="euerr"></div>'+
-    '<div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">'+
-      '<button class="btn-ghost" style="color:#475569;border-color:#cbd5e1" onclick="document.getElementById(\'modal-host\').innerHTML=\'\'">Cancelar</button>'+
-      '<button class="btn-primary" onclick="adminSaveUser(\''+u.id+'\')">Guardar cambios</button></div></div></div>';
+    '<p class="section-title">'+titulo+'</p>'+
+    '<div style="font-size:13.5px;line-height:1.5">'+html+'</div>'+
+    '<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn-primary" onclick="document.getElementById(\'modal-host\').innerHTML=\'\'">Entendido</button></div></div></div>';
 }
-async function adminSaveUser(id){
-  const nombre=document.getElementById("eu_name").value.trim();
-  const rolEl=document.getElementById("eu_rol");
-  const rol=rolEl&&!rolEl.disabled?rolEl.value:null;
-  const areaEl=document.getElementById("eu_area");
-  const err=document.getElementById("euerr");
-  if(!nombre){err.textContent="El nombre es obligatorio.";return;}
-  const upd={nombre:nombre};
-  if(rol&&rol!=="superadmin"){upd.rol=rol;upd.area=rol==="admin"?null:(areaEl?areaEl.value:null);}
-  const {error}=await sb.from("perfiles").update(upd).eq("id",id);
-  if(error){err.textContent="No se pudo guardar: "+error.message+" — revisa que exista una política RLS que permita al super usuario actualizar 'perfiles'.";return;}
-  document.getElementById("modal-host").innerHTML="";
-  toast("Cuenta actualizada ✓");renderCuentas();
-}
-async function adminResetPass(email){
-  const ok=await askConfirm("Resetear contraseña","Se enviará un email de recuperación a "+email+" para que defina una nueva contraseña. ¿Continuar?");
-  if(!ok)return;
-  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
-  if(error){toast("Error: "+error.message,"#dc2626");return;}
-  toast("📧 Email de recuperación enviado a "+email);
-}
-function askConfirm(titulo,texto){
-  return new Promise(res=>{
-    const host=document.getElementById("modal-host");
-    host.innerHTML='<div class="modal-bg"><div class="modal"><p class="section-title">'+titulo+'</p><p class="muted">'+esc(texto)+'</p>'+
-      '<div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">'+
-      '<button class="btn-ghost" style="color:#475569;border-color:#cbd5e1" id="acno">Cancelar</button>'+
-      '<button class="btn-primary" id="acyes">Confirmar</button></div></div></div>';
-    document.getElementById("acno").onclick=()=>{host.innerHTML="";res(false);};
-    document.getElementById("acyes").onclick=()=>{host.innerHTML="";res(true);};
-  });
+async function resetClave(userId,email){
+  if(!confirm("¿Resetear la clave de "+email+"? Se generará una clave temporal y la persona deberá definir una nueva al ingresar."))return;
+  const temp="Dcsm-"+Math.random().toString(36).slice(2,8);
+  const {data,error}=await sb.functions.invoke("reset-clave",{body:{userId:userId,tempPassword:temp}});
+  if(error){toast("No se pudo resetear: "+(error.message||error),"#dc2626");return;}
+  if(data&&data.error){toast(data.error,"#dc2626");return;}
+  infoModal("Clave reseteada para "+esc(email),
+    "Entrégale esta <b>clave temporal</b> a la persona. Al iniciar sesión, el sistema le pedirá crear una contraseña nueva."+
+    '<div style="margin-top:10px;font-family:ui-monospace,monospace;font-size:18px;background:var(--soft);padding:10px;border-radius:8px;text-align:center;user-select:all">'+esc(temp)+'</div>');
 }
 
-/* ===== RECUPERACIÓN DE CONTRASEÑA (link del email) ===== */
-function renderRecovery(){
-  document.getElementById("app").innerHTML=
-   '<div class="login-wrap"><div class="card login-card">'+
-   '<div style="display:flex;justify-content:center;margin-bottom:6px">'+logo(54)+'</div>'+
-   '<h2 style="text-align:center">Nueva contraseña</h2><p class="sub" style="text-align:center">Define tu nueva contraseña para ingresar</p>'+
-   '<label>Nueva contraseña</label><input id="rp1" type="password" placeholder="••••••">'+
-   '<label>Repetir contraseña</label><input id="rp2" type="password" placeholder="••••••">'+
-   '<div class="err" id="rperr"></div>'+
-   '<button class="btn-primary" style="width:100%;margin-top:12px" onclick="doRecovery()">Guardar contraseña</button>'+
-   '</div></div>';
-}
-async function doRecovery(){
-  const p1=document.getElementById("rp1").value,p2=document.getElementById("rp2").value;
-  const err=document.getElementById("rperr");
-  if(!p1||p1.length<6){err.textContent="La contraseña debe tener al menos 6 caracteres.";return;}
-  if(p1!==p2){err.textContent="Las contraseñas no coinciden.";return;}
-  const {error}=await sb.auth.updateUser({password:p1});
-  if(error){err.textContent=error.message;return;}
-  toast("Contraseña actualizada ✓");
-  setTimeout(function(){location.href=location.origin+location.pathname;},1500);
-}
-
-sb.auth.onAuthStateChange(function(event,session){ if(event==="PASSWORD_RECOVERY") renderRecovery(); });
 init();
 </script>
 </body>
