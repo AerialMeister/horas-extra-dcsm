@@ -66,6 +66,10 @@
   .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
   .modal{background:#fff;border-radius:14px;padding:22px;width:440px;max-width:100%}
   .approver{font-size:11.5px;color:#166534;background:#dcfce7;border-radius:6px;padding:2px 8px;display:inline-block;margin-top:6px}
+  .chart-box{position:relative;height:300px;margin-bottom:16px}
+  .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.chart-grid{grid-template-columns:1fr}}
+  .cycle-note{font-size:12px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:6px}
 </style>
 </head>
 <body>
@@ -74,6 +78,7 @@
 <div id="modal-host"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 /* ===== CONFIG ===== */
 const SB_URL="https://qwhinhcgbquosyvfqpcn.supabase.co";
@@ -109,6 +114,42 @@ function pickerHora(prefix,fecha,hh,mm){
 function genCodigo(){return "HE-"+new Date().getFullYear()+"-"+String(Date.now()).slice(-6);}
 function isSuper(){return PERFIL && PERFIL.rol==="superadmin";}
 function isAdmin(){return PERFIL && (PERFIL.rol==="admin"||PERFIL.rol==="superadmin");}
+
+/* ===== CICLO DE MES 20→20 =====
+   El "mes" de horas extra va del día 20 del mes anterior al día 20 del actual.
+   Una fecha cuyo día sea >= 20 se cuenta en el mes SIGUIENTE.
+   Ej: 20-may→junio, 19-jun→junio, 20-jun→julio, 23-jun→julio. */
+function cicloMes(fechaStr){
+  if(!fechaStr)return null;
+  var p=String(fechaStr).slice(0,10).split("-");
+  var y=parseInt(p[0],10),m=parseInt(p[1],10),d=parseInt(p[2],10);
+  if(!y||!m||!d)return null;
+  if(d>=20){m++;if(m>12){m=1;y++;}}
+  return y+"-"+(m<10?"0":"")+m;
+}
+function cicloMesActual(){
+  var hoy=new Date();
+  return cicloMes(hoy.getFullYear()+"-"+String(hoy.getMonth()+1).padStart(2,"0")+"-"+String(hoy.getDate()).padStart(2,"0"));
+}
+function mesLabel(ym){
+  if(!ym)return"";
+  var p=ym.split("-");
+  var nombres=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  return nombres[parseInt(p[1],10)-1]+" "+p[0];
+}
+function notaCiclo(){
+  return '<div class="cycle-note">📅 Los meses se calculan en ciclo del día 20 al 20 (ej.: «'+mesLabel(cicloMesActual())+'» = 20 del mes anterior → 19 del actual; el día 20 ya cuenta para el mes siguiente).</div>';
+}
+
+/* ===== GRÁFICOS (Chart.js) ===== */
+var _charts={};
+function destroyCharts(){for(var k in _charts){try{_charts[k].destroy();}catch(e){}}_charts={};}
+function makeChart(id,cfg){
+  var el=document.getElementById(id);
+  if(!el||typeof Chart==="undefined")return;
+  _charts[id]=new Chart(el.getContext("2d"),cfg);
+}
+const PALETA=["#1e3a8f","#d11f2d","#16a34a","#d97706","#0891b2","#7c3aed","#db2777","#0f766e"];
 
 /* ===== AUTH ===== */
 async function init(){
@@ -212,18 +253,18 @@ async function renderUserInbox(){
   const {data:mine,error}=await sb.from("solicitudes").select("*").eq("solicitante",PERFIL.id).order("creado_en",{ascending:false});
   if(error){document.getElementById("ubody").innerHTML='<div class="card err">'+error.message+'</div>';return;}
   const all=mine||[];
-  const curM=new Date().toISOString().slice(0,7);
-  const months=Array.from(new Set(all.map(r=>r.fecha?r.fecha.slice(0,7):null).filter(Boolean)));
+  const curM=cicloMesActual();
+  const months=Array.from(new Set(all.map(r=>cicloMes(r.fecha)).filter(Boolean)));
   if(months.indexOf(curM)<0)months.push(curM);
   months.sort().reverse();
   const sel=window._umes||curM;window._umes=sel;
-  const inM=all.filter(r=>r.fecha&&r.fecha.indexOf(sel)===0);
+  const inM=all.filter(r=>cicloMes(r.fecha)===sel);
   const g={pendiente:[],devuelta:[],aprobada:[],rechazada:[]};inM.forEach(r=>{if(g[r.estado])g[r.estado].push(r);});
   const horasApr=g.aprobada.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
-  const mesLabel=(()=>{const [y,m]=sel.split("-");return ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"][parseInt(m,10)-1]+" "+y;})();
-  const opts=months.map(m=>'<option value="'+m+'" '+(m===sel?'selected':'')+'>'+m+'</option>').join("");
+  const lbl=mesLabel(sel);
+  const opts=months.map(m=>'<option value="'+m+'" '+(m===sel?'selected':'')+'>'+mesLabel(m)+'</option>').join("");
   const filtro='<div class="card" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">'+
-    '<p class="section-title" style="margin:0">Mis solicitudes · '+mesLabel+'</p>'+
+    '<div><p class="section-title" style="margin:0">Mis solicitudes · '+lbl+'</p>'+notaCiclo()+'</div>'+
     '<div style="display:flex;align-items:center;gap:10px"><label style="margin:0">Consultar mes</label>'+
     '<select style="width:auto" onchange="window._umes=this.value;refreshSol()">'+opts+'</select></div></div>';
   const indic='<div class="stat-grid">'+
@@ -345,30 +386,37 @@ async function decide(id,estado){
 
 /* ===== REPORTE ===== */
 async function renderReport(){
+  destroyCharts();
   const {data:rows,error}=await sb.from("solicitudes").select("*, perfiles!solicitudes_solicitante_fkey(nombre,email)");
   const {data:evs}=await sb.from("eventos_solicitud").select("*");
   if(error){document.getElementById("abody").innerHTML='<div class="card err">'+error.message+'</div>';return;}
   const all=rows||[];
-  const months=Array.from(new Set(all.map(r=>r.fecha?r.fecha.slice(0,7):null).filter(Boolean))).sort().reverse();
-  const cur=window._mes||(months[0]||new Date().toISOString().slice(0,7));window._mes=cur;
+  const months=Array.from(new Set(all.map(r=>cicloMes(r.fecha)).filter(Boolean))).sort().reverse();
+  const cur=window._mes||(months[0]||cicloMesActual());window._mes=cur;
   const userMap={};all.forEach(r=>{if(r.solicitante)userMap[r.solicitante]=(r.perfiles&&r.perfiles.nombre)||r.solicitante;});
   const fUser=window._rUser||"",fArea=window._rArea||"";
-  let inM=all.filter(r=>r.fecha&&r.fecha.indexOf(cur)===0);
-  let evM=(evs||[]).filter(e=>e.ocurrido_en&&e.ocurrido_en.indexOf(cur)===0);
+  let inM=all.filter(r=>cicloMes(r.fecha)===cur);
+  let evM=(evs||[]).filter(e=>cicloMes(e.ocurrido_en)===cur);
   if(fUser){inM=inM.filter(r=>r.solicitante===fUser);evM=evM.filter(e=>e.solicitante===fUser);}
   if(fArea){inM=inM.filter(r=>r.area===fArea);evM=evM.filter(e=>e.area===fArea);}
   const apr=inM.filter(r=>r.estado==="aprobada"),pen=inM.filter(r=>r.estado==="pendiente");
   const dev=evM.filter(e=>e.estado==="devuelta").length,rej=evM.filter(e=>e.estado==="rechazada").length;
   const horasApr=apr.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
   const horasSol=inM.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
-  const areaRows=AREAS.map(a=>{const f=inM.filter(r=>r.area===a);const h=f.filter(r=>r.estado==="aprobada").reduce((s,r)=>s+parseFloat(horasDe(r)||0),0);return '<tr><td>'+a+'</td><td>'+f.length+'</td><td>'+f.filter(r=>r.estado==="aprobada").length+'</td><td>'+h.toFixed(2)+' h</td></tr>';}).join("");
+  // datos por área
+  const areaTot=AREAS.map(a=>inM.filter(r=>r.area===a).length);
+  const areaApr=AREAS.map(a=>inM.filter(r=>r.area===a&&r.estado==="aprobada").length);
+  const areaHrs=AREAS.map(a=>inM.filter(r=>r.area===a&&r.estado==="aprobada").reduce((s,r)=>s+parseFloat(horasDe(r)||0),0));
+  const areaRows=AREAS.map((a,i)=>'<tr><td>'+a+'</td><td>'+areaTot[i]+'</td><td>'+areaApr[i]+'</td><td>'+areaHrs[i].toFixed(2)+' h</td></tr>').join("");
+  // datos por naturaleza
   const natC={};NATURALEZAS.forEach(n=>natC[n]=0);inM.forEach(r=>(r.naturaleza||[]).forEach(n=>{if(n in natC)natC[n]++;}));
+  const natVals=NATURALEZAS.map(n=>natC[n]);
   const natRows=NATURALEZAS.map(n=>'<tr><td>'+n+'</td><td>'+natC[n]+'</td></tr>').join("");
-  const opts=months.length?months.map(m=>'<option '+(m===cur?'selected':'')+'>'+m+'</option>').join(""):'<option>'+cur+'</option>';
+  const opts=(months.length?months:[cur]).map(m=>'<option value="'+m+'" '+(m===cur?'selected':'')+'>'+mesLabel(m)+'</option>').join("");
   const userOpts='<option value="">Todos los usuarios</option>'+Object.keys(userMap).map(id=>'<option value="'+id+'" '+(id===fUser?'selected':'')+'>'+esc(userMap[id])+'</option>').join("");
   const areaOpts='<option value="">Todos los equipos</option>'+AREAS.map(a=>'<option value="'+a+'" '+(a===fArea?'selected':'')+'>'+a+'</option>').join("");
   document.getElementById("abody").innerHTML=
-   '<div class="card" style="margin-bottom:18px"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px"><p class="section-title" style="margin:0">Reporte mensual</p>'+
+   '<div class="card" style="margin-bottom:18px"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px"><div><p class="section-title" style="margin:0">Reporte mensual · '+mesLabel(cur)+'</p>'+notaCiclo()+'</div>'+
    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
    '<label style="margin:0">Mes</label><select style="width:auto" onchange="window._mes=this.value;renderReport()">'+opts+'</select>'+
    '<label style="margin:0">Usuario</label><select style="width:auto" onchange="window._rUser=this.value;renderReport()">'+userOpts+'</select>'+
@@ -382,10 +430,42 @@ async function renderReport(){
    '<div class="stat"><div class="n">'+pen.length+'</div><div class="l">Pendientes</div></div>'+
    '<div class="stat"><div class="n">'+horasApr.toFixed(1)+' h</div><div class="l">Horas aprobadas</div></div>'+
    '<div class="stat"><div class="n">'+horasSol.toFixed(1)+' h</div><div class="l">Horas solicitadas</div></div></div>'+
-   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p><table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
-   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p><table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
+   '<div class="chart-grid" style="margin-bottom:18px">'+
+     '<div class="card"><p class="section-title">Distribución de estados</p><div class="chart-box"><canvas id="chEstados"></canvas></div></div>'+
+     '<div class="card"><p class="section-title">Horas: aprobadas vs. solicitadas</p><div class="chart-box"><canvas id="chHoras"></canvas></div></div>'+
+   '</div>'+
+   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p>'+
+     '<div class="chart-box"><canvas id="chArea"></canvas></div>'+
+     '<table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
+   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p>'+
+     '<div class="chart-box"><canvas id="chNat"></canvas></div>'+
+     '<table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
    '<div class="card"><p class="section-title">Detalle de aprobadas</p>'+(apr.length?'<table><thead><tr><th>ID</th><th>Solicitante</th><th>Área</th><th>Fecha</th><th>Horas</th><th>Autorizó</th></tr></thead><tbody>'+apr.map(r=>'<tr><td>'+esc(r.codigo)+'</td><td>'+esc((r.perfiles&&r.perfiles.nombre)||"—")+'</td><td>'+esc(r.area)+'</td><td>'+r.fecha+'</td><td>'+horasDe(r)+' h</td><td>'+esc(r.decidido_por_email||"—")+'</td></tr>').join("")+'</tbody></table>':'<div class="empty">Sin aprobadas este mes</div>')+'</div>';
   window._aprCache=apr;
+
+  // ===== Construcción de gráficos =====
+  const optBase={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:12,font:{size:11}}}}};
+  makeChart("chEstados",{type:"doughnut",
+    data:{labels:["Aprobadas","Pendientes","Devoluciones","Rechazos"],
+      datasets:[{data:[apr.length,pen.length,dev,rej],backgroundColor:["#16a34a","#64748b","#d97706","#dc2626"],borderWidth:1,borderColor:"#fff"}]},
+    options:Object.assign({},optBase,{plugins:{legend:{position:"right",labels:{boxWidth:12,font:{size:11}}}},cutout:"55%"})});
+  makeChart("chHoras",{type:"bar",
+    data:{labels:["Horas"],datasets:[
+      {label:"Solicitadas",data:[Number(horasSol.toFixed(2))],backgroundColor:"#1e3a8f"},
+      {label:"Aprobadas",data:[Number(horasApr.toFixed(2))],backgroundColor:"#16a34a"}]},
+    options:Object.assign({},optBase,{scales:{y:{beginAtZero:true,title:{display:true,text:"Horas"}}},plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}}})});
+  makeChart("chArea",{type:"bar",
+    data:{labels:AREAS,datasets:[
+      {label:"Solicitudes",data:areaTot,backgroundColor:"#1e3a8f",order:2},
+      {label:"Aprobadas",data:areaApr,backgroundColor:"#16a34a",order:2},
+      {label:"Horas aprobadas",data:areaHrs.map(h=>Number(h.toFixed(2))),type:"line",yAxisID:"y1",borderColor:"#d97706",backgroundColor:"#d97706",tension:.3,order:1}]},
+    options:Object.assign({},optBase,{
+      scales:{y:{beginAtZero:true,position:"left",title:{display:true,text:"N° solicitudes"}},
+        y1:{beginAtZero:true,position:"right",grid:{drawOnChartArea:false},title:{display:true,text:"Horas"}}},
+      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}}})});
+  makeChart("chNat",{type:"doughnut",
+    data:{labels:NATURALEZAS,datasets:[{data:natVals,backgroundColor:PALETA,borderWidth:1,borderColor:"#fff"}]},
+    options:Object.assign({},optBase,{plugins:{legend:{position:"right",labels:{boxWidth:12,font:{size:11}}}},cutout:"55%"})});
 }
 function exportCSV(){
   const apr=window._aprCache||[];
