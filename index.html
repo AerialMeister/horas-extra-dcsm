@@ -96,7 +96,9 @@ function esc(s){return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">"
 function toast(m,c){const t=document.createElement("div");t.className="toast";t.textContent=m;if(c)t.style.background=c;document.getElementById("toast-host").appendChild(t);setTimeout(()=>t.remove(),4000);}
 function horasDe(r){if(r.horas!=null)return Number(r.horas).toFixed(2);if(!r.hora_inicio||!r.hora_termino)return"";const a=r.hora_inicio.split(":").map(Number),b=r.hora_termino.split(":").map(Number);let m=(b[0]*60+b[1])-(a[0]*60+a[1]);if(m<0)m+=1440;return(m/60).toFixed(2);}
 function statusPill(s){const map={pendiente:["Pendiente","p-pend"],aprobada:["Aprobada","p-appr"],devuelta:["Devuelta · corregir","p-ret"],rechazada:["Rechazada","p-rej"]};const x=map[s]||[s,"p-pend"];return '<span class="pill '+x[1]+'">'+x[0]+'</span>';}
-function rango(r){var hi=(r.hora_inicio||"").slice(0,5),hf=(r.hora_termino||"").slice(0,5),ff=r.fecha_fin||r.fecha;var cruza=(ff&&ff!==r.fecha);return r.fecha+" "+hi+" → "+(cruza?ff+" ":"")+hf;}
+function fmtFecha(f){if(!f)return"";var p=(""+f).slice(0,10).split("-");if(p.length<3)return f;return p[2]+"/"+p[1]+"/"+p[0].slice(2);}
+function etiquetaMes(sel){var p=(""+sel).split("-"),y=+p[0],m=+p[1];var N=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];return (N[m-1]||"")+" "+y;}
+function rango(r){var hi=(r.hora_inicio||"").slice(0,5),hf=(r.hora_termino||"").slice(0,5),ff=r.fecha_fin||r.fecha;var cruza=(ff&&ff!==r.fecha);return fmtFecha(r.fecha)+" "+hi+" → "+(cruza?fmtFecha(ff)+" ":"")+hf;}
 /* Período mensual: del 21 del mes anterior al 20 del presente (ambos incluidos).
    Un día 21..fin de mes pertenece al período del mes SIGUIENTE. */
 function periodo(fecha){if(!fecha)return"";var p=fecha.split("-"),y=+p[0],m=+p[1],d=+p[2];if(d>=21){m++;if(m>12){m=1;y++;}}return y+"-"+(m<10?"0":"")+m;}
@@ -227,7 +229,7 @@ async function renderUserInbox(){
   const g={pendiente:[],devuelta:[],aprobada:[],rechazada:[]};inM.forEach(r=>{if(g[r.estado])g[r.estado].push(r);});
   const horasApr=g.aprobada.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
   const mesLabel=(()=>{const [y,m]=sel.split("-");return ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"][parseInt(m,10)-1]+" "+y;})();
-  const opts=months.map(m=>'<option value="'+m+'" '+(m===sel?'selected':'')+'>'+m+'</option>').join("");
+  const opts=months.map(m=>'<option value="'+m+'" '+(m===sel?'selected':'')+'>'+etiquetaMes(m)+'</option>').join("");
   const filtro='<div class="card" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">'+
     '<p class="section-title" style="margin:0">Mis solicitudes · '+mesLabel+' <span class="muted" style="font-weight:400">('+rangoPeriodo(sel)+')</span></p>'+
     '<div style="display:flex;align-items:center;gap:10px"><label style="margin:0">Consultar mes</label>'+
@@ -372,7 +374,7 @@ async function renderReport(){
   const areaRows=AREAS.map(a=>{const f=inM.filter(r=>r.area===a);const h=f.filter(r=>r.estado==="aprobada").reduce((s,r)=>s+parseFloat(horasDe(r)||0),0);return '<tr><td>'+a+'</td><td>'+f.length+'</td><td>'+f.filter(r=>r.estado==="aprobada").length+'</td><td>'+h.toFixed(2)+' h</td></tr>';}).join("");
   const natC={};NATURALEZAS.forEach(n=>natC[n]=0);inM.forEach(r=>(r.naturaleza||[]).forEach(n=>{if(n in natC)natC[n]++;}));
   const natRows=NATURALEZAS.map(n=>'<tr><td>'+n+'</td><td>'+natC[n]+'</td></tr>').join("");
-  const opts=months.length?months.map(m=>'<option '+(m===cur?'selected':'')+'>'+m+'</option>').join(""):'<option>'+cur+'</option>';
+  const opts=months.length?months.map(m=>'<option value="'+m+'" '+(m===cur?'selected':'')+'>'+etiquetaMes(m)+'</option>').join(""):'<option value="'+cur+'">'+etiquetaMes(cur)+'</option>';
   const userOpts='<option value="">Todos los usuarios</option>'+Object.keys(userMap).map(id=>'<option value="'+id+'" '+(id===fUser?'selected':'')+'>'+esc(userMap[id])+'</option>').join("");
   const areaOpts='<option value="">Todos los equipos</option>'+AREAS.map(a=>'<option value="'+a+'" '+(a===fArea?'selected':'')+'>'+a+'</option>').join("");
   document.getElementById("abody").innerHTML=
@@ -392,7 +394,7 @@ async function renderReport(){
    '<div class="stat"><div class="n">'+horasSol.toFixed(1)+' h</div><div class="l">Horas solicitadas</div></div></div>'+
    '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p><table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
    '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p><table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
-   '<div class="card"><p class="section-title">Detalle de aprobadas</p>'+(apr.length?'<table><thead><tr><th>ID</th><th>Solicitante</th><th>Área</th><th>Fecha</th><th>Horas</th><th>Autorizó</th></tr></thead><tbody>'+apr.map(r=>'<tr><td>'+esc(r.codigo)+'</td><td>'+esc((r.perfiles&&r.perfiles.nombre)||"—")+'</td><td>'+esc(r.area)+'</td><td>'+r.fecha+'</td><td>'+horasDe(r)+' h</td><td>'+esc(r.decidido_por_email||"—")+'</td></tr>').join("")+'</tbody></table>':'<div class="empty">Sin aprobadas este mes</div>')+'</div>';
+   '<div class="card"><p class="section-title">Detalle de aprobadas</p>'+(apr.length?'<table><thead><tr><th>ID</th><th>Solicitante</th><th>Área</th><th>Fecha</th><th>Horas</th><th>Autorizó</th></tr></thead><tbody>'+apr.map(r=>'<tr><td>'+esc(r.codigo)+'</td><td>'+esc((r.perfiles&&r.perfiles.nombre)||"—")+'</td><td>'+esc(r.area)+'</td><td>'+fmtFecha(r.fecha)+'</td><td>'+horasDe(r)+' h</td><td>'+esc(r.decidido_por_email||"—")+'</td></tr>').join("")+'</tbody></table>':'<div class="empty">Sin aprobadas este mes</div>')+'</div>';
   window._aprCache=apr;
 }
 function rutDe(r){return (r.perfiles&&r.perfiles.rut)||(window._dirRut&&r.perfiles&&window._dirRut[r.perfiles.nombre])||"";}
@@ -416,11 +418,11 @@ async function exportXLSX(){
     {header:"Aprobador",key:"aprobador",width:26}
   ];
   apr.forEach(r=>ws.addRow({
-    proyecto:"DCSM",area:r.area,fecha:r.fecha,
+    proyecto:"DCSM",area:r.area,fecha:fmtFecha(r.fecha),
     nombre:(r.perfiles&&r.perfiles.nombre)||"",rut:rutDe(r),
     detalle:r.detalles||"",tipo:(r.naturaleza||[]).join(", "),
-    inicio:r.fecha+" "+(r.hora_inicio||"").slice(0,5),
-    fin:(r.fecha_fin||r.fecha)+" "+(r.hora_termino||"").slice(0,5),
+    inicio:fmtFecha(r.fecha)+" "+(r.hora_inicio||"").slice(0,5),
+    fin:fmtFecha(r.fecha_fin||r.fecha)+" "+(r.hora_termino||"").slice(0,5),
     horas:Number(horasDe(r))||0,aprobador:r.decidido_por_email||""
   }));
   const hr=ws.getRow(1);hr.height=24;
