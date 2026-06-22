@@ -66,10 +66,6 @@
   .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
   .modal{background:#fff;border-radius:14px;padding:22px;width:440px;max-width:100%}
   .approver{font-size:11.5px;color:#166534;background:#dcfce7;border-radius:6px;padding:2px 8px;display:inline-block;margin-top:6px}
-  .chart-box{position:relative;height:300px;margin-bottom:16px}
-  .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  @media(max-width:760px){.chart-grid{grid-template-columns:1fr}}
-  .cycle-note{font-size:12px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:6px}
 </style>
 </head>
 <body>
@@ -78,7 +74,7 @@
 <div id="modal-host"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script>
 /* ===== CONFIG ===== */
 const SB_URL="https://qwhinhcgbquosyvfqpcn.supabase.co";
@@ -101,6 +97,11 @@ function toast(m,c){const t=document.createElement("div");t.className="toast";t.
 function horasDe(r){if(r.horas!=null)return Number(r.horas).toFixed(2);if(!r.hora_inicio||!r.hora_termino)return"";const a=r.hora_inicio.split(":").map(Number),b=r.hora_termino.split(":").map(Number);let m=(b[0]*60+b[1])-(a[0]*60+a[1]);if(m<0)m+=1440;return(m/60).toFixed(2);}
 function statusPill(s){const map={pendiente:["Pendiente","p-pend"],aprobada:["Aprobada","p-appr"],devuelta:["Devuelta · corregir","p-ret"],rechazada:["Rechazada","p-rej"]};const x=map[s]||[s,"p-pend"];return '<span class="pill '+x[1]+'">'+x[0]+'</span>';}
 function rango(r){var hi=(r.hora_inicio||"").slice(0,5),hf=(r.hora_termino||"").slice(0,5),ff=r.fecha_fin||r.fecha;var cruza=(ff&&ff!==r.fecha);return r.fecha+" "+hi+" → "+(cruza?ff+" ":"")+hf;}
+/* Período mensual: del 21 del mes anterior al 20 del presente (ambos incluidos).
+   Un día 21..fin de mes pertenece al período del mes SIGUIENTE. */
+function periodo(fecha){if(!fecha)return"";var p=fecha.split("-"),y=+p[0],m=+p[1],d=+p[2];if(d>=21){m++;if(m>12){m=1;y++;}}return y+"-"+(m<10?"0":"")+m;}
+function periodoHoy(){var t=new Date();return periodo(t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0"));}
+function rangoPeriodo(sel){var p=sel.split("-"),y=+p[0],m=+p[1];var ma=m-1<1?12:m-1, ya=m-1<1?y-1:y;var N=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];return "21 "+N[ma-1]+(ya!==y?" "+ya:"")+" – 20 "+N[m-1]+" "+y;}
 function optsHoras(sel){var o='<option value="">--</option>';for(var h=0;h<24;h++){var v=(h<10?"0":"")+h;o+='<option value="'+v+'" '+(v===sel?"selected":"")+'>'+v+'</option>';}return o;}
 function optsMin(sel){var o='<option value="">--</option>';for(var m=0;m<60;m++){var v=(m<10?"0":"")+m;o+='<option value="'+v+'" '+(v===sel?"selected":"")+'>'+v+'</option>';}return o;}
 function pickerHora(prefix,fecha,hh,mm){
@@ -114,42 +115,6 @@ function pickerHora(prefix,fecha,hh,mm){
 function genCodigo(){return "HE-"+new Date().getFullYear()+"-"+String(Date.now()).slice(-6);}
 function isSuper(){return PERFIL && PERFIL.rol==="superadmin";}
 function isAdmin(){return PERFIL && (PERFIL.rol==="admin"||PERFIL.rol==="superadmin");}
-
-/* ===== CICLO DE MES 20→20 =====
-   El "mes" de horas extra va del día 20 del mes anterior al día 20 del actual.
-   Una fecha cuyo día sea >= 20 se cuenta en el mes SIGUIENTE.
-   Ej: 20-may→junio, 19-jun→junio, 20-jun→julio, 23-jun→julio. */
-function cicloMes(fechaStr){
-  if(!fechaStr)return null;
-  var p=String(fechaStr).slice(0,10).split("-");
-  var y=parseInt(p[0],10),m=parseInt(p[1],10),d=parseInt(p[2],10);
-  if(!y||!m||!d)return null;
-  if(d>=20){m++;if(m>12){m=1;y++;}}
-  return y+"-"+(m<10?"0":"")+m;
-}
-function cicloMesActual(){
-  var hoy=new Date();
-  return cicloMes(hoy.getFullYear()+"-"+String(hoy.getMonth()+1).padStart(2,"0")+"-"+String(hoy.getDate()).padStart(2,"0"));
-}
-function mesLabel(ym){
-  if(!ym)return"";
-  var p=ym.split("-");
-  var nombres=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
-  return nombres[parseInt(p[1],10)-1]+" "+p[0];
-}
-function notaCiclo(){
-  return '<div class="cycle-note">📅 Los meses se calculan en ciclo del día 20 al 20 (ej.: «'+mesLabel(cicloMesActual())+'» = 20 del mes anterior → 19 del actual; el día 20 ya cuenta para el mes siguiente).</div>';
-}
-
-/* ===== GRÁFICOS (Chart.js) ===== */
-var _charts={};
-function destroyCharts(){for(var k in _charts){try{_charts[k].destroy();}catch(e){}}_charts={};}
-function makeChart(id,cfg){
-  var el=document.getElementById(id);
-  if(!el||typeof Chart==="undefined")return;
-  _charts[id]=new Chart(el.getContext("2d"),cfg);
-}
-const PALETA=["#1e3a8f","#d11f2d","#16a34a","#d97706","#0891b2","#7c3aed","#db2777","#0f766e"];
 
 /* ===== AUTH ===== */
 async function init(){
@@ -253,18 +218,18 @@ async function renderUserInbox(){
   const {data:mine,error}=await sb.from("solicitudes").select("*").eq("solicitante",PERFIL.id).order("creado_en",{ascending:false});
   if(error){document.getElementById("ubody").innerHTML='<div class="card err">'+error.message+'</div>';return;}
   const all=mine||[];
-  const curM=cicloMesActual();
-  const months=Array.from(new Set(all.map(r=>cicloMes(r.fecha)).filter(Boolean)));
+  const curM=periodoHoy();
+  const months=Array.from(new Set(all.map(r=>periodo(r.fecha)).filter(Boolean)));
   if(months.indexOf(curM)<0)months.push(curM);
   months.sort().reverse();
   const sel=window._umes||curM;window._umes=sel;
-  const inM=all.filter(r=>cicloMes(r.fecha)===sel);
+  const inM=all.filter(r=>periodo(r.fecha)===sel);
   const g={pendiente:[],devuelta:[],aprobada:[],rechazada:[]};inM.forEach(r=>{if(g[r.estado])g[r.estado].push(r);});
   const horasApr=g.aprobada.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
-  const lbl=mesLabel(sel);
-  const opts=months.map(m=>'<option value="'+m+'" '+(m===sel?'selected':'')+'>'+mesLabel(m)+'</option>').join("");
+  const mesLabel=(()=>{const [y,m]=sel.split("-");return ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"][parseInt(m,10)-1]+" "+y;})();
+  const opts=months.map(m=>'<option value="'+m+'" '+(m===sel?'selected':'')+'>'+m+'</option>').join("");
   const filtro='<div class="card" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">'+
-    '<div><p class="section-title" style="margin:0">Mis solicitudes · '+lbl+'</p>'+notaCiclo()+'</div>'+
+    '<p class="section-title" style="margin:0">Mis solicitudes · '+mesLabel+' <span class="muted" style="font-weight:400">('+rangoPeriodo(sel)+')</span></p>'+
     '<div style="display:flex;align-items:center;gap:10px"><label style="margin:0">Consultar mes</label>'+
     '<select style="width:auto" onchange="window._umes=this.value;refreshSol()">'+opts+'</select></div></div>';
   const indic='<div class="stat-grid">'+
@@ -386,42 +351,37 @@ async function decide(id,estado){
 
 /* ===== REPORTE ===== */
 async function renderReport(){
-  destroyCharts();
-  const {data:rows,error}=await sb.from("solicitudes").select("*, perfiles!solicitudes_solicitante_fkey(nombre,email)");
+  const {data:rows,error}=await sb.from("solicitudes").select("*, perfiles!solicitudes_solicitante_fkey(nombre,email,rut)");
   const {data:evs}=await sb.from("eventos_solicitud").select("*");
+  const {data:dir}=await sb.from("directorio_rut").select("nombre,rut");
+  window._dirRut={};(dir||[]).forEach(x=>{window._dirRut[x.nombre]=x.rut;});
   if(error){document.getElementById("abody").innerHTML='<div class="card err">'+error.message+'</div>';return;}
   const all=rows||[];
-  const months=Array.from(new Set(all.map(r=>cicloMes(r.fecha)).filter(Boolean))).sort().reverse();
-  const cur=window._mes||(months[0]||cicloMesActual());window._mes=cur;
+  const months=Array.from(new Set(all.map(r=>periodo(r.fecha)).filter(Boolean))).sort().reverse();
+  const cur=window._mes||(months[0]||periodoHoy());window._mes=cur;
   const userMap={};all.forEach(r=>{if(r.solicitante)userMap[r.solicitante]=(r.perfiles&&r.perfiles.nombre)||r.solicitante;});
   const fUser=window._rUser||"",fArea=window._rArea||"";
-  let inM=all.filter(r=>cicloMes(r.fecha)===cur);
-  let evM=(evs||[]).filter(e=>cicloMes(e.ocurrido_en)===cur);
+  let inM=all.filter(r=>periodo(r.fecha)===cur);
+  let evM=(evs||[]).filter(e=>e.ocurrido_en&&periodo(e.ocurrido_en.slice(0,10))===cur);
   if(fUser){inM=inM.filter(r=>r.solicitante===fUser);evM=evM.filter(e=>e.solicitante===fUser);}
   if(fArea){inM=inM.filter(r=>r.area===fArea);evM=evM.filter(e=>e.area===fArea);}
   const apr=inM.filter(r=>r.estado==="aprobada"),pen=inM.filter(r=>r.estado==="pendiente");
   const dev=evM.filter(e=>e.estado==="devuelta").length,rej=evM.filter(e=>e.estado==="rechazada").length;
   const horasApr=apr.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
   const horasSol=inM.reduce((a,r)=>a+parseFloat(horasDe(r)||0),0);
-  // datos por área
-  const areaTot=AREAS.map(a=>inM.filter(r=>r.area===a).length);
-  const areaApr=AREAS.map(a=>inM.filter(r=>r.area===a&&r.estado==="aprobada").length);
-  const areaHrs=AREAS.map(a=>inM.filter(r=>r.area===a&&r.estado==="aprobada").reduce((s,r)=>s+parseFloat(horasDe(r)||0),0));
-  const areaRows=AREAS.map((a,i)=>'<tr><td>'+a+'</td><td>'+areaTot[i]+'</td><td>'+areaApr[i]+'</td><td>'+areaHrs[i].toFixed(2)+' h</td></tr>').join("");
-  // datos por naturaleza
+  const areaRows=AREAS.map(a=>{const f=inM.filter(r=>r.area===a);const h=f.filter(r=>r.estado==="aprobada").reduce((s,r)=>s+parseFloat(horasDe(r)||0),0);return '<tr><td>'+a+'</td><td>'+f.length+'</td><td>'+f.filter(r=>r.estado==="aprobada").length+'</td><td>'+h.toFixed(2)+' h</td></tr>';}).join("");
   const natC={};NATURALEZAS.forEach(n=>natC[n]=0);inM.forEach(r=>(r.naturaleza||[]).forEach(n=>{if(n in natC)natC[n]++;}));
-  const natVals=NATURALEZAS.map(n=>natC[n]);
   const natRows=NATURALEZAS.map(n=>'<tr><td>'+n+'</td><td>'+natC[n]+'</td></tr>').join("");
-  const opts=(months.length?months:[cur]).map(m=>'<option value="'+m+'" '+(m===cur?'selected':'')+'>'+mesLabel(m)+'</option>').join("");
+  const opts=months.length?months.map(m=>'<option '+(m===cur?'selected':'')+'>'+m+'</option>').join(""):'<option>'+cur+'</option>';
   const userOpts='<option value="">Todos los usuarios</option>'+Object.keys(userMap).map(id=>'<option value="'+id+'" '+(id===fUser?'selected':'')+'>'+esc(userMap[id])+'</option>').join("");
   const areaOpts='<option value="">Todos los equipos</option>'+AREAS.map(a=>'<option value="'+a+'" '+(a===fArea?'selected':'')+'>'+a+'</option>').join("");
   document.getElementById("abody").innerHTML=
-   '<div class="card" style="margin-bottom:18px"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px"><div><p class="section-title" style="margin:0">Reporte mensual · '+mesLabel(cur)+'</p>'+notaCiclo()+'</div>'+
+   '<div class="card" style="margin-bottom:18px"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px"><p class="section-title" style="margin:0">Reporte mensual</p>'+
    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
    '<label style="margin:0">Mes</label><select style="width:auto" onchange="window._mes=this.value;renderReport()">'+opts+'</select>'+
    '<label style="margin:0">Usuario</label><select style="width:auto" onchange="window._rUser=this.value;renderReport()">'+userOpts+'</select>'+
    '<label style="margin:0">Equipo</label><select style="width:auto" onchange="window._rArea=this.value;renderReport()">'+areaOpts+'</select>'+
-   '<button class="btn-primary btn-sm" onclick="exportCSV()">Exportar CSV</button></div></div></div>'+
+   '<button class="btn-primary btn-sm" onclick="exportXLSX()">⬇ Exportar Excel</button></div></div></div>'+
    '<div class="stat-grid">'+
    '<div class="stat"><div class="n">'+inM.length+'</div><div class="l">Solicitudes totales</div></div>'+
    '<div class="stat"><div class="n" style="color:var(--green)">'+apr.length+'</div><div class="l">Aprobadas</div></div>'+
@@ -430,55 +390,54 @@ async function renderReport(){
    '<div class="stat"><div class="n">'+pen.length+'</div><div class="l">Pendientes</div></div>'+
    '<div class="stat"><div class="n">'+horasApr.toFixed(1)+' h</div><div class="l">Horas aprobadas</div></div>'+
    '<div class="stat"><div class="n">'+horasSol.toFixed(1)+' h</div><div class="l">Horas solicitadas</div></div></div>'+
-   '<div class="chart-grid" style="margin-bottom:18px">'+
-     '<div class="card"><p class="section-title">Distribución de estados</p><div class="chart-box"><canvas id="chEstados"></canvas></div></div>'+
-     '<div class="card"><p class="section-title">Horas: aprobadas vs. solicitadas</p><div class="chart-box"><canvas id="chHoras"></canvas></div></div>'+
-   '</div>'+
-   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p>'+
-     '<div class="chart-box"><canvas id="chArea"></canvas></div>'+
-     '<table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
-   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p>'+
-     '<div class="chart-box"><canvas id="chNat"></canvas></div>'+
-     '<table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
+   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p><table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
+   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p><table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
    '<div class="card"><p class="section-title">Detalle de aprobadas</p>'+(apr.length?'<table><thead><tr><th>ID</th><th>Solicitante</th><th>Área</th><th>Fecha</th><th>Horas</th><th>Autorizó</th></tr></thead><tbody>'+apr.map(r=>'<tr><td>'+esc(r.codigo)+'</td><td>'+esc((r.perfiles&&r.perfiles.nombre)||"—")+'</td><td>'+esc(r.area)+'</td><td>'+r.fecha+'</td><td>'+horasDe(r)+' h</td><td>'+esc(r.decidido_por_email||"—")+'</td></tr>').join("")+'</tbody></table>':'<div class="empty">Sin aprobadas este mes</div>')+'</div>';
   window._aprCache=apr;
-
-  // ===== Construcción de gráficos =====
-  const optBase={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:12,font:{size:11}}}}};
-  makeChart("chEstados",{type:"doughnut",
-    data:{labels:["Aprobadas","Pendientes","Devoluciones","Rechazos"],
-      datasets:[{data:[apr.length,pen.length,dev,rej],backgroundColor:["#16a34a","#64748b","#d97706","#dc2626"],borderWidth:1,borderColor:"#fff"}]},
-    options:Object.assign({},optBase,{plugins:{legend:{position:"right",labels:{boxWidth:12,font:{size:11}}}},cutout:"55%"})});
-  makeChart("chHoras",{type:"bar",
-    data:{labels:["Horas"],datasets:[
-      {label:"Solicitadas",data:[Number(horasSol.toFixed(2))],backgroundColor:"#1e3a8f"},
-      {label:"Aprobadas",data:[Number(horasApr.toFixed(2))],backgroundColor:"#16a34a"}]},
-    options:Object.assign({},optBase,{scales:{y:{beginAtZero:true,title:{display:true,text:"Horas"}}},plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}}})});
-  makeChart("chArea",{type:"bar",
-    data:{labels:AREAS,datasets:[
-      {label:"Solicitudes",data:areaTot,backgroundColor:"#1e3a8f",order:2},
-      {label:"Aprobadas",data:areaApr,backgroundColor:"#16a34a",order:2},
-      {label:"Horas aprobadas",data:areaHrs.map(h=>Number(h.toFixed(2))),type:"line",yAxisID:"y1",borderColor:"#d97706",backgroundColor:"#d97706",tension:.3,order:1}]},
-    options:Object.assign({},optBase,{
-      scales:{y:{beginAtZero:true,position:"left",title:{display:true,text:"N° solicitudes"}},
-        y1:{beginAtZero:true,position:"right",grid:{drawOnChartArea:false},title:{display:true,text:"Horas"}}},
-      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}}})});
-  makeChart("chNat",{type:"doughnut",
-    data:{labels:NATURALEZAS,datasets:[{data:natVals,backgroundColor:PALETA,borderWidth:1,borderColor:"#fff"}]},
-    options:Object.assign({},optBase,{plugins:{legend:{position:"right",labels:{boxWidth:12,font:{size:11}}}},cutout:"55%"})});
 }
-function exportCSV(){
+function rutDe(r){return (r.perfiles&&r.perfiles.rut)||(window._dirRut&&r.perfiles&&window._dirRut[r.perfiles.nombre])||"";}
+async function exportXLSX(){
   const apr=window._aprCache||[];
-  const head=["ID","Solicitante","Area","Fecha inicio","Hora inicio","Fecha termino","Hora termino","Horas","Naturaleza","Autorizo"];
-  const csv=[head.join(",")].concat(apr.map(r=>[r.codigo,'"'+((r.perfiles&&r.perfiles.nombre)||"")+'"',r.area,r.fecha,r.hora_inicio,(r.fecha_fin||r.fecha),r.hora_termino,horasDe(r),'"'+(r.naturaleza||[]).join("; ")+'"',r.decidido_por_email||""].join(","))).join("\n");
-  const b=new Blob([csv],{type:"text/csv;charset=utf-8;"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="horas-extra-"+(window._mes||"")+".csv";a.click();
+  if(!window.ExcelJS){toast("No se pudo cargar el generador de Excel. Reintenta.","#dc2626");return;}
+  if(!apr.length){toast("No hay aprobadas en este período para exportar.","#d97706");return;}
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet("Horas extra");
+  ws.columns=[
+    {header:"Proyecto",key:"proyecto",width:12},
+    {header:"Área",key:"area",width:18},
+    {header:"Fecha horas extra",key:"fecha",width:16},
+    {header:"Nombre",key:"nombre",width:24},
+    {header:"Rut",key:"rut",width:14},
+    {header:"Detalle de hora extra",key:"detalle",width:40},
+    {header:"Tipo de actividad",key:"tipo",width:28},
+    {header:"Inicio",key:"inicio",width:18},
+    {header:"Fin",key:"fin",width:18},
+    {header:"N° horas",key:"horas",width:10},
+    {header:"Aprobador",key:"aprobador",width:26}
+  ];
+  apr.forEach(r=>ws.addRow({
+    proyecto:"DCSM",area:r.area,fecha:r.fecha,
+    nombre:(r.perfiles&&r.perfiles.nombre)||"",rut:rutDe(r),
+    detalle:r.detalles||"",tipo:(r.naturaleza||[]).join(", "),
+    inicio:r.fecha+" "+(r.hora_inicio||"").slice(0,5),
+    fin:(r.fecha_fin||r.fecha)+" "+(r.hora_termino||"").slice(0,5),
+    horas:Number(horasDe(r))||0,aprobador:r.decidido_por_email||""
+  }));
+  const hr=ws.getRow(1);hr.height=24;
+  hr.eachCell(c=>{c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF1E3A8F"}};c.font={bold:true,color:{argb:"FFFFFFFF"},size:11};c.alignment={vertical:"middle",horizontal:"center",wrapText:true};c.border={top:{style:"thin",color:{argb:"FFBFC8E0"}},bottom:{style:"thin",color:{argb:"FFBFC8E0"}},left:{style:"thin",color:{argb:"FFBFC8E0"}},right:{style:"thin",color:{argb:"FFBFC8E0"}}};});
+  for(var i=2;i<=ws.rowCount;i++){var row=ws.getRow(i);var zebra=(i%2===0);row.eachCell(c=>{c.alignment={vertical:"middle",wrapText:true};c.border={top:{style:"hair",color:{argb:"FFE2E8F0"}},bottom:{style:"hair",color:{argb:"FFE2E8F0"}},left:{style:"hair",color:{argb:"FFE2E8F0"}},right:{style:"hair",color:{argb:"FFE2E8F0"}}};if(zebra)c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFF1F5F9"}};});}
+  ws.views=[{state:"frozen",ySplit:1}];
+  ws.autoFilter={from:"A1",to:"K1"};
+  const buf=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="HorasExtra-DCSM-"+(window._mes||"")+".xlsx";a.click();
 }
 
 /* ===== CUENTAS (solo super) ===== */
 async function renderCuentas(){
   const {data:us}=await sb.from("perfiles").select("*").order("rol");
   window._cuentas=us||[];
-  const rows=(us||[]).map(u=>'<div class="user-row"><span><b>'+esc(u.email)+'</b> · '+esc(u.nombre)+' <span class="muted">('+(u.rol==="superadmin"?"super":u.rol==="admin"?"supervisor":u.area)+')</span></span>'+
+  const rows=(us||[]).map(u=>'<div class="user-row"><span><b>'+esc(u.email)+'</b> · '+esc(u.nombre)+' <span class="muted">('+(u.rol==="superadmin"?"super":u.rol==="admin"?"supervisor":u.area)+')</span>'+(u.rut?' <span class="muted">· RUT '+esc(u.rut)+'</span>':'')+'</span>'+
      (u.rol!=="superadmin"?'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-ghost btn-sm" style="color:#475569;border-color:#cbd5e1" onclick="editarCuenta(\''+u.id+'\')">Editar</button><button class="btn-amber btn-sm" onclick="resetClave(\''+u.id+'\',\''+esc(u.email)+'\')">Resetear clave</button><button class="btn-red btn-sm" onclick="eliminarCuenta(\''+u.id+'\',\''+esc(u.email)+'\')">Eliminar</button></div>':'<span class="muted" style="font-size:12px">tu cuenta</span>')+'</div>').join("");
   document.getElementById("abody").innerHTML=
    '<div class="card" style="max-width:640px;margin-bottom:18px"><p class="section-title">Crear cuenta</p>'+
@@ -487,6 +446,7 @@ async function renderCuentas(){
    '<div class="row2"><div><label>Nombre completo</label><input id="nu_name"></div>'+
    '<div><label>Tipo de cuenta</label><select id="nu_rol" onchange="document.getElementById(\'nu_area_wrap\').style.display=this.value===\'admin\'?\'none\':\'block\'"><option value="solicitante">Solicitante</option><option value="admin">Supervisor</option></select></div></div>'+
    '<div id="nu_area_wrap"><label>Área</label><select id="nu_area">'+AREAS.map(a=>'<option>'+a+'</option>').join("")+'</select></div>'+
+   '<label>RUT</label><input id="nu_rut" placeholder="12.345.678-9">'+
    '<div class="err" id="nuerr"></div>'+
    '<button class="btn-primary" style="margin-top:12px" onclick="adminCreateUser()">Crear cuenta</button></div>'+
    '<div class="card" style="max-width:640px"><p class="section-title">Cuentas existentes</p>'+(rows||'<div class="empty">—</div>')+'</div>';
@@ -497,7 +457,8 @@ async function adminCreateUser(){
   const err=document.getElementById("nuerr");
   if(!email||!password||!nombre){err.textContent="Completa email, contraseña y nombre.";return;}
   if(password.length<6){err.textContent="La contraseña debe tener al menos 6 caracteres.";return;}
-  const meta={nombre:nombre,rol:rol};if(rol!=="admin")meta.area=area;
+  const rut=document.getElementById("nu_rut").value.trim();
+  const meta={nombre:nombre,rol:rol};if(rol!=="admin")meta.area=area;if(rut)meta.rut=rut;
   // cliente temporal: crea el usuario sin cerrar tu sesión de super
   const tmp=supabase.createClient(SB_URL,SB_KEY,{auth:{storageKey:"sb-tmp-"+Date.now(),persistSession:false,autoRefreshToken:false}});
   const {error}=await tmp.auth.signUp({email,password,options:{data:meta}});
@@ -523,6 +484,7 @@ function editarCuenta(uid){
       '<option value="solicitante" '+(u.rol==="solicitante"?"selected":"")+'>Solicitante</option>'+
       '<option value="admin" '+(u.rol==="admin"?"selected":"")+'>Supervisor</option></select>'+
     '<div id="ed_area_wrap" style="display:'+(u.rol==="admin"?"none":"block")+'"><label>Área</label><select id="ed_area">'+AREAS.map(a=>'<option '+(a===u.area?"selected":"")+'>'+a+'</option>').join("")+'</select></div>'+
+    '<label>RUT</label><input id="ed_rut" value="'+esc(u.rut||"")+'" placeholder="12.345.678-9">'+
     '<div class="err" id="ederr"></div>'+
     '<div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">'+
     '<button class="btn-ghost" style="color:#475569;border-color:#cbd5e1" onclick="document.getElementById(\'modal-host\').innerHTML=\'\'">Cancelar</button>'+
@@ -532,9 +494,10 @@ async function guardarEdicion(uid){
   const nombre=document.getElementById("ed_name").value.trim();
   const rol=document.getElementById("ed_rol").value;
   const area=rol==="admin"?null:document.getElementById("ed_area").value;
+  const rut=document.getElementById("ed_rut").value.trim()||null;
   const err=document.getElementById("ederr");
   if(!nombre){err.textContent="El nombre es obligatorio.";return;}
-  const {error}=await sb.rpc("editar_perfil",{uid:uid,nuevo_nombre:nombre,nuevo_rol:rol,nueva_area:area});
+  const {error}=await sb.rpc("editar_perfil",{uid:uid,nuevo_nombre:nombre,nuevo_rol:rol,nueva_area:area,nuevo_rut:rut});
   if(error){err.textContent=error.message;return;}
   document.getElementById("modal-host").innerHTML="";
   toast("Cuenta actualizada ✓");renderCuentas();
