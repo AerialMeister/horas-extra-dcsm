@@ -75,6 +75,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 /* ===== CONFIG ===== */
 const SB_URL="https://qwhinhcgbquosyvfqpcn.supabase.co";
@@ -392,10 +393,21 @@ async function renderReport(){
    '<div class="stat"><div class="n">'+pen.length+'</div><div class="l">Pendientes</div></div>'+
    '<div class="stat"><div class="n">'+horasApr.toFixed(1)+' h</div><div class="l">Horas aprobadas</div></div>'+
    '<div class="stat"><div class="n">'+horasSol.toFixed(1)+' h</div><div class="l">Horas solicitadas</div></div></div>'+
-   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p><table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
-   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p><table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
+   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por área</p><div style="height:240px;margin-bottom:16px"><canvas id="chartArea"></canvas></div><table><thead><tr><th>Área</th><th>Solicitudes</th><th>Aprobadas</th><th>Horas aprobadas</th></tr></thead><tbody>'+areaRows+'</tbody></table></div>'+
+   '<div class="card" style="margin-bottom:18px"><p class="section-title">Por naturaleza</p><div style="height:280px;margin-bottom:16px"><canvas id="chartNat"></canvas></div><table><thead><tr><th>Naturaleza</th><th>Veces solicitada</th></tr></thead><tbody>'+natRows+'</tbody></table></div>'+
    '<div class="card"><p class="section-title">Detalle de aprobadas</p>'+(apr.length?'<table><thead><tr><th>ID</th><th>Solicitante</th><th>Área</th><th>Fecha</th><th>Horas</th><th>Autorizó</th></tr></thead><tbody>'+apr.map(r=>'<tr><td>'+esc(r.codigo)+'</td><td>'+esc((r.perfiles&&r.perfiles.nombre)||"—")+'</td><td>'+esc(r.area)+'</td><td>'+fmtFecha(r.fecha)+'</td><td>'+horasDe(r)+' h</td><td>'+esc(r.decidido_por_email||"—")+'</td></tr>').join("")+'</tbody></table>':'<div class="empty">Sin aprobadas este mes</div>')+'</div>';
   window._aprCache=apr;
+  if(window.Chart){
+    var pal=["#1e3a8f","#2563eb","#0ea5e9","#16a34a","#d97706","#dc2626","#7c3aed"];
+    var horasArea=AREAS.map(a=>apr.filter(r=>r.area===a).reduce((s,r)=>s+parseFloat(horasDe(r)||0),0));
+    if(window._chA){try{window._chA.destroy();}catch(e){}}
+    var ca=document.getElementById("chartArea");
+    if(ca)window._chA=new Chart(ca,{type:"bar",data:{labels:AREAS,datasets:[{label:"Horas aprobadas",data:horasArea,backgroundColor:"#1e3a8f",borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,title:{display:true,text:"Horas aprobadas"}}}}});
+    var natData=NATURALEZAS.map(n=>natC[n]||0);
+    if(window._chN){try{window._chN.destroy();}catch(e){}}
+    var cn=document.getElementById("chartNat");
+    if(cn)window._chN=new Chart(cn,{type:"doughnut",data:{labels:NATURALEZAS,datasets:[{data:natData,backgroundColor:pal,borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}}}});
+  }
 }
 function rutDe(r){return (r.perfiles&&r.perfiles.rut)||(window._dirRut&&r.perfiles&&window._dirRut[r.perfiles.nombre])||"";}
 async function exportXLSX(){
